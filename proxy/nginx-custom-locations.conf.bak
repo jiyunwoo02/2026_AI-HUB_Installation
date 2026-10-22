@@ -1,0 +1,16 @@
+#       # This is a configuration sample nginx location configuration routing traffic to ActiveMQ web console
+#       # You can extend the configuration if you want to route external traffic to AI Hub docker-networks
+#
+#       set $amq_webui_backend_service http://aihub-activemq:8161;
+#       location ~ ^/console(.*)$ {
+#           client_max_body_size 100M;
+#           proxy_set_header Host               $http_host;
+#           proxy_set_header X-Forwarded-Proto  $original_scheme;
+#           proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+#           proxy_set_header X-Forwarded-Host   $http_host;
+#           proxy_set_header X-Forwarded-Server $host;
+#           proxy_set_header X-Forwarded-Port   $server_port;
+#
+#           proxy_read_timeout    300;
+#           proxy_pass            $amq_webui_backend_service/console$1$is_args$args;
+#       }

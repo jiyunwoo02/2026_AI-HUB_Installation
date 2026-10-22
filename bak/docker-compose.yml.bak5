@@ -1,0 +1,1282 @@
+version: "2.4"
+services:
+  proxy:
+    image: "${REGISTRY}rapidminer-proxy:${PROXY_VERSION}"
+    hostname: proxy
+    restart: always
+    environment:
+      - PLATFORM_ADMIN_ENVIRONMENT_EXPORT_AUTH_BASIC_USER=${PLATFORM_ADMIN_ENVIRONMENT_EXPORT_AUTH_BASIC_USER}
+      - PLATFORM_ADMIN_ENVIRONMENT_EXPORT_AUTH_BASIC_PASSWORD=${PLATFORM_ADMIN_ENVIRONMENT_EXPORT_AUTH_BASIC_PASSWORD}
+      # Deprecated, please use HTTP_PORT and HTTPS_PORT
+      - UNPRIVILEGED_PORTS=${UNPRIVILEGED_PORTS}
+      - HTTP_PORT=${HTTP_PORT}
+      - HTTPS_PORT=${HTTPS_PORT}
+      - DEPLOYMENT_PORT=${PUBLIC_PORT}
+      - PROXY_DATA_UPLOAD_LIMIT=${PROXY_DATA_UPLOAD_LIMIT}
+      - SSO_PUBLIC_URL=${SSO_PUBLIC_URL}
+      - PUBLIC_URL=${PUBLIC_URL}
+      - SSO_IDP_REALM=${SSO_IDP_REALM}
+      # Backends
+      - AIHUB_BACKEND=${AIHUB_BACKEND}
+      - AIHUB_FRONTEND=${AIHUB_FRONTEND}
+      - GRAFANA_BACKEND=${GRAFANA_BACKEND}
+      - JUPYTERHUB_BACKEND=${JUPYTERHUB_BACKEND}
+      - KEYCLOAK_BACKEND=${KEYCLOAK_BACKEND}
+      - LANDING_BACKEND=${LANDING_BACKEND}
+      - LETSENCRYPT_BACKEND=${LETSENCRYPT_BACKEND}
+      - METRICS_BACKEND=${METRICS_BACKEND}
+      - PLATFORM_ADMIN_BACKEND=${PLATFORM_ADMIN_BACKEND}
+      - SCORING_AGENT_BACKEND=${SCORING_AGENT_BACKEND}
+      - SCORING_AGENT_WEBUI_BACKEND=${SCORING_AGENT_WEBUI_BACKEND}
+      - TOKEN_BACKEND=${TOKEN_BACKEND}
+      - PANOPTICON_BACKEND=${PANOPTICON_BACKEND}
+      - WEBAPI_GATEWAY_BACKEND=${WEBAPI_GATEWAY_BACKEND}
+      # Backend suffixes
+      - GRAFANA_URL_SUFFIX=${GRAFANA_URL_SUFFIX}
+      - JUPYTERHUB_URL_SUFFIX=${JUPYTERHUB_URL_SUFFIX}
+      - METRICS_URL_SUFFIX=${METRICS_URL_SUFFIX}
+      - PLATFORM_ADMIN_URL_SUFFIX=${PLATFORM_ADMIN_URL_SUFFIX}
+      - SCORING_AGENT_URL_SUFFIX=${SCORING_AGENT_URL_SUFFIX}
+      - SCORING_AGENT_WEBUI_URL_SUFFIX=${SCORING_AGENT_WEBUI_URL_SUFFIX}
+      - TOKEN_TOOL_URL_SUFFIX=${TOKEN_TOOL_URL_SUFFIX}
+      # Default Basic Auth Accesses
+      - METRICS_AUTH_BASIC_USER=${METRICS_AUTH_BASIC_USER}
+      - METRICS_AUTH_BASIC_PASS=${METRICS_AUTH_BASIC_PASS}
+      - SCORING_AGENT_BASIC_AUTH=${SCORING_AGENT_BASIC_AUTH}
+      - SCORING_AGENT_ADMIN_USER=${SCORING_AGENT_ADMIN_USER}
+      - SCORING_AGENT_ADMIN_PASSWORD=${SCORING_AGENT_ADMIN_PASSWORD}
+      # HTTPS settings
+      - ALLOW_LETSENCRYPT=${ALLOW_LETSENCRYPT}
+      - HTTPS_CRT_PATH=${HTTPS_CRT_PATH}
+      - HTTPS_KEY_PATH=${HTTPS_KEY_PATH}
+      - HTTPS_KEY_PASSWORD_FILE_PATH=${HTTPS_KEY_PASSWORD_FILE_PATH}
+      - HTTPS_DH_PATH=${HTTPS_DH_PATH}
+      - WAIT_FOR_DHPARAM=${WAIT_FOR_DHPARAM}
+      - DEBUG_CONF_INIT=${DEBUG_CONF_INIT}
+      - TZ=${TZ}
+      - ACCESS_CONTROL_ALLOW_ORIGIN_WEBAPI=${ACCESS_CONTROL_ALLOW_ORIGIN_WEBAPI}
+      - ACCESS_CONTROL_ALLOW_ORIGIN_KEYCLOAK=${ACCESS_CONTROL_ALLOW_ORIGIN_KEYCLOAK}
+      - ACCESS_CONTROL_ALLOW_ORIGIN_RTS=${ACCESS_CONTROL_ALLOW_ORIGIN_RTS}
+      - ACCESS_CONTROL_ALLOW_ORIGIN_GENERAL=${ACCESS_CONTROL_ALLOW_ORIGIN_GENERAL}
+      - CONTENT_SECURITY_POLICY=${CONTENT_SECURITY_POLICY}
+    ports:
+      - "0.0.0.0:${HTTP_PORT}:${HTTP_PORT}"
+      - "0.0.0.0:${HTTPS_PORT}:${HTTPS_PORT}"
+    networks:
+      platform-int-net:
+        aliases:
+          - proxy
+          - ${PUBLIC_DOMAIN}
+      jupyterhub-user-net:
+        aliases:
+          - ${PUBLIC_DOMAIN}
+      panopticon-net:
+        aliases:
+          - proxy
+          - ${PUBLIC_DOMAIN}
+    volumes:
+      - ./ssl:/etc/nginx/ssl
+      - platform-admin-uploaded-vol:/rapidminer/platform-admin/uploaded/
+      - ./proxy/nginx-custom-locations.conf:/etc/nginx/nginx-custom-locations.conf
+    profiles:
+      - proxy
+      - deployment-init
+    healthcheck:
+      test: service nginx status
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 5s
+  letsencrypt:
+    image: "${REGISTRY}rm-letsencrypt-client:${LETSENCRYPT_VERSION}"
+    hostname: letsencrypt
+    restart: always
+    environment:
+      - PUBLIC_URL=${PUBLIC_URL}
+      - LETSENCRYPT_HOME=/certificates/
+      - DOMAIN=${PUBLIC_DOMAIN}
+      - WEBMASTER_MAIL=${WEBMASTER_MAIL}
+      - TZ=${TZ}
+    networks:
+      platform-int-net:
+        aliases:
+          - letsencrypt
+    volumes:
+      - ./ssl:/etc/letsencrypt/
+    profiles:
+      - letsencrypt
+    healthcheck:
+      test: service apache2 status
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 5s
+  keycloak-db:
+    image: "${REGISTRY}postgres-17:${KEYCLOAK_POSTGRES_VERSION}"
+    restart: always
+    hostname: keycloak-db
+    environment:
+      - POSTGRES_DB=${KEYCLOAK_DBSCHEMA}
+      - POSTGRES_USER=${KEYCLOAK_DBUSER}
+      - POSTGRES_PASSWORD=${KEYCLOAK_DBPASS}
+      - POSTGRES_INITDB_ARGS=${KEYCLOAK_POSTGRES_INITDB_ARGS}
+      - TZ=${TZ}
+      - PGTZ=${TZ}
+    volumes:
+      - keycloak-db-vol:/var/lib/postgresql/data
+    networks:
+      idp-db-net:
+        aliases:
+          - keycloak-db
+    profiles:
+      - keycloak
+      - deployment-init
+    healthcheck:
+      test: pg_isready -d ${KEYCLOAK_DBSCHEMA} -U ${KEYCLOAK_DBUSER}
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+  keycloak:
+    image: "${REGISTRY}rapidminer-keycloak:${KEYCLOAK_VERSION}"
+    restart: always
+    hostname: keycloak
+    environment:
+      - KC_DB=postgres
+      - KC_DB_SCHEMA=public
+      - KC_DB_URL_HOST=keycloak-db
+      - KC_DB_URL_DATABASE=${KEYCLOAK_DBSCHEMA}
+      - KC_DB_USERNAME=${KEYCLOAK_DBUSER}
+      - KC_DB_PASSWORD=${KEYCLOAK_DBPASS}
+      - KC_FEATURES=${KC_FEATURES}
+      - KC_HOSTNAME=${PUBLIC_DOMAIN}
+      - KC_HOSTNAME_URL=${KC_HOSTNAME_URL}
+      - KC_HTTP_RELATIVE_PATH=/auth
+      - KC_HOSTNAME_STRICT_BACKCHANNEL=${KC_HOSTNAME_STRICT_BACKCHANNEL}
+      - KC_HOSTNAME_STRICT=${KC_HOSTNAME_STRICT}
+      - KC_HOSTNAME_STRICT_HTTPS=${KC_HOSTNAME_STRICT_HTTPS}
+      - KEYCLOAK_ADMIN=${KEYCLOAK_USER}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_PASSWORD}
+      - KC_LOG_LEVEL=${KC_LOG_LEVEL}
+      - KC_HTTP_ENABLED=${KC_HTTP_ENABLED}
+      - TZ=${TZ}
+      - KC_HOSTNAME_BACKCHANNEL_DYNAMIC=${KC_HOSTNAME_BACKCHANNEL_DYNAMIC}
+      - KC_PROXY_HEADERS=${KC_PROXY_HEADERS}
+      - KC_HEALTH_ENABLED=${KC_HEALTH_ENABLED}
+      - KC_PROXY_TRUSTED_ADDRESSES=${KC_PROXY_TRUSTED_ADDRESSES}
+    depends_on:
+      proxy:
+        condition: service_started
+      keycloak-db:
+        condition: service_healthy
+    healthcheck:
+      test: timeout 1 bash -c 'cat < /dev/null > /dev/tcp/localhost/8080'
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+    networks:
+      panopticon-net:
+      platform-int-net:
+        aliases:
+          - keycloak
+      idp-db-net:
+        aliases:
+          - keycloak
+    profiles:
+      - keycloak
+      - deployment-init
+  deployment-init:
+    image: "${REGISTRY}rapidminer-deployment-init:${INIT_VERSION}"
+    restart: "no"
+    hostname: deployment-init
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      aihub-postgresql:
+        condition: service_healthy
+    environment:
+      - CUSTOM_CA_CERTS_FILE=${CUSTOM_CA_CERTS_FILE}
+      - DEBUG=false
+      - SSO_INTERNAL_URL=${KEYCLOAK_BACKEND}
+      - TZ=${TZ}
+    volumes:
+      - ./ssl:/tmp/ssl
+      # Deployment-init reads all variable directly from .env file
+      - ./.env:/rapidminer/.env
+      - ./docker-compose.yml:/docker-compose.yml:ro
+      - keycloak-kcadm-vol:/rapidminer/.keycloak/
+      - deployed-services-vol:/rapidminer/deployed-services/
+    networks:
+      platform-int-net:
+        aliases:
+          - deployment-init
+      aihub-db-net:
+        aliases:
+          - deployment-init
+    profiles:
+      - deployment-init
+  license-proxy:
+    image: "${REGISTRY}rapidminer-licenseproxy:${LICENSE_PROXY_VERSION}"
+    hostname: ${LICENSE_PROXY_HOSTNAME:-license-proxy}
+    restart: always
+    environment:
+      - KEYCLOAK_AUTH_SERVER_URL=http://keycloak:8080/auth/
+      - SPRING_PROFILES_ACTIVE=${LICENSE_PROXY_PROFILES_ACTIVE}
+      - KEYCLOAK_REALM=${SSO_IDP_REALM}
+      - MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=${MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE:-health}
+      - LICENSE_PROXY_MODE=${LICENSE_PROXY_MODE}
+      - LICENSE_UNIT_MANAGER_AUTHENTICATION_TYPE=${LICENSE_UNIT_MANAGER_AUTHENTICATION_TYPE}
+      - LICENSE_UNIT_MANAGER_AUTH_CODE=${LICENSE_UNIT_MANAGER_AUTH_CODE}
+      - LICENSE_UNIT_MANAGER_USER_NAME=${LICENSE_UNIT_MANAGER_USER_NAME}
+      - LICENSE_UNIT_MANAGER_PASSWORD=${LICENSE_UNIT_MANAGER_PASSWORD}
+      - LICENSE_UNIT_MANAGER_RESET_AUTH_TOKEN=${LICENSE_UNIT_MANAGER_RESET_AUTH_TOKEN}
+      - LICENSE_UNIT_MANAGER_TOKEN=${LICENSE_UNIT_MANAGER_TOKEN}
+      # - DEBUG=true
+      - TZ=${TZ}
+      - ALTAIR_LICENSE_PATH=${ALTAIR_LICENSE_PATH}
+      - ALM_HHWU_PROXY_HOST=${ALM_HHWU_PROXY_HOST}
+      - ALM_HHWU_PROXY_PORT=${ALM_HHWU_PROXY_PORT}
+      - ALM_HHWU_PROXY_USERNAME=${ALM_HHWU_PROXY_USERNAME}
+      - ALM_HHWU_PROXY_PASSWORD=${ALM_HHWU_PROXY_PASSWORD}
+    volumes:
+      - license-proxy-vol:/license-proxy/home
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      platform-int-net:
+        aliases:
+          - license-proxy
+    profiles:
+      - altair-license
+    healthcheck:
+      test: curl -s http://localhost:9191/actuator/health
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+  aihub-postgresql:
+    image: "${REGISTRY}postgres-17:${AIHUB_POSTGRES_VERSION}"
+    hostname: aihub-postgresql
+    restart: always
+    environment:
+      - POSTGRES_DB=${AIHUB_DBSCHEMA}
+      - POSTGRES_USER=${AIHUB_DBUSER}
+      - POSTGRES_PASSWORD=${AIHUB_DBPASS}
+      - POSTGRES_INITDB_ARGS=${AIHUB_POSTGRES_INITDB_ARGS}
+      - TZ=${TZ}
+      - PGTZ=${TZ}
+    volumes:
+      - aihub-db-vol:/var/lib/postgresql/data
+    networks:
+      aihub-db-net:
+        aliases:
+          - aihub-postgresql
+    profiles:
+      - aihub-backend
+      - deployment-init
+    healthcheck:
+      test: pg_isready -d ${AIHUB_DBSCHEMA} -U ${AIHUB_DBUSER}
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+  aihub-frontend:
+    image: ${REGISTRY}rapidminer-aihub-ui:${AIHUB_FRONTEND_VERSION}
+    hostname: aihub-frontend
+    restart: always
+    environment:
+      - REACT_APP_API_URL=${PUBLIC_URL}/api/v1/
+      - REACT_APP_KEYCLOAK_BASE_URL=${SSO_PUBLIC_URL}/auth
+      - REACT_APP_KEYCLOAK_REALM=${SSO_IDP_REALM}
+      - REACT_APP_KEYCLOAK_CLIENT_ID=${AIHUB_FRONTEND_SSO_CLIENT_ID}
+      - REACT_APP_KEYCLOAK_ON_LOAD=login-required
+      - REACT_APP_KEYCLOAK_SSL_REQUIRED=${SSO_SSL_REQUIRED}
+      - REACT_APP_WEBAPI_GATEWAY_URL=${PUBLIC_URL}/webapi
+      - REACT_APP_GATEWAY=${PUBLIC_URL}/webapi
+      - TZ=${TZ}
+    depends_on:
+      proxy:
+        condition: service_healthy
+      aihub-backend:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks:
+      platform-int-net:
+        aliases:
+          - aihub-frontend
+    profiles:
+      - aihub-frontend
+    healthcheck:
+      test: service nginx status
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 5s
+  aihub-activemq:
+    image: ${REGISTRY}rapidminer-activemq-artemis:${ACTIVEMQ_VERSION}
+    hostname: aihub-activemq
+    restart: always
+    environment:
+      - BROKER_ACTIVEMQ_HOST=aihub-activemq
+      - BROKER_ACTIVEMQ_PORT=61616
+      - BROKER_ACTIVEMQ_USERNAME=${BROKER_ACTIVEMQ_USERNAME}
+      - BROKER_ACTIVEMQ_PASSWORD=${BROKER_ACTIVEMQ_PASSWORD}
+      - ARTEMIS_USER=${BROKER_ACTIVEMQ_USERNAME}
+      - ARTEMIS_PASSWORD=${BROKER_ACTIVEMQ_PASSWORD}
+      - ENABLE_JMX_EXPORTER=${ENABLE_JMX_EXPORTER:-true}
+      - TZ=${TZ}
+    depends_on:
+      aihub-activemq-volume-fix:
+        condition: service_completed_successfully
+    networks:
+      platform-int-net:
+        aliases:
+          - aihub-activemq
+    profiles:
+      - aihub-activemq
+    volumes:
+      - activemq-artemis-vol:/var/lib/artemis-instance/data
+    healthcheck:
+      test: bash -c "exec 6<> /dev/tcp/localhost/8161"
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+  aihub-activemq-volume-fix:
+    image: ${REGISTRY}busybox:${ACTIVEMQ_VERSION}
+    hostname: aihub-activemq-volume-fix
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c", "chown -R 1001:0 /var/lib/artemis-instance/data && chmod -R 2775 /var/lib/artemis-instance/data"]
+    volumes:
+      - activemq-artemis-vol:/var/lib/artemis-instance/data
+    networks:
+      platform-int-net:
+        aliases:
+          - aihub-activemq-volume-fix
+    profiles:
+      - aihub-activemq
+  aihub-backend:
+    image: ${REGISTRY}rapidminer-aihub:${AIHUB_BACKEND_VERSION}
+    hostname: aihub-backend
+    #cpuset: ${AIHUB_BACKEND_CPUSET}
+    restart: always
+    environment:
+      #- LOGGING_LEVEL_COM_RAPIDMINER=DEBUG
+      - SERVER_FORWARD_HEADERS_STRATEGY=framework
+      - LOGGING_LEVEL_COM_RAPIDMINER_EXECUTION_JOBSERVICE_SCHEDULED=${LOGGING_LEVEL_COM_RAPIDMINER_EXECUTION_JOBSERVICE_SCHEDULED}
+      - DB_HOST=${AIHUB_DBHOST}
+      - DB_PORT=5432
+      - DB_NAME=${AIHUB_DBSCHEMA}
+      - DB_USER=${AIHUB_DBUSER}
+      - DB_PASSWORD=${AIHUB_DBPASS}
+      - KEYCLOAK_REALM=${SSO_IDP_REALM}
+      - AUTH_REALM=${SSO_IDP_REALM}
+      - KEYCLOAK_AUTH_SERVER_URL=http://keycloak:8080/auth/
+      - KEYCLOAK_RESOURCE=${AIHUB_BACKEND_SSO_CLIENT_ID}
+      - KEYCLOAK_SSL_REQUIRED=${SSO_SSL_REQUIRED}
+      # SMTP settings
+      # - SPRING_MAIL_HOST=${SPRING_MAIL_HOST}
+      # - SPRING_MAIL_PORT=${SPRING_MAIL_PORT}
+      # - SPRING_MAIL_USERNAME=${SPRING_MAIL_USERNAME}
+      # - SPRING_MAIL_PASSWORD=${SPRING_MAIL_PASSWORD}
+      # - SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=${SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH}
+      # - SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=${SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE}
+      # - REPORTING_ERROR_MAIL_TO=${REPORTING_ERROR_MAIL_TO}
+      # - REPORTING_ERROR_MAIL_SUBJECT_PREFIX=${REPORTING_ERROR_MAIL_SUBJECT_PREFIX}
+      # - REPORTING_ERROR_MAIL_FROM_ADDRESS=${REPORTING_ERROR_MAIL_FROM_ADDRESS}
+      # - REPORTING_ERROR_MAIL_FROM_NAME=${REPORTING_ERROR_MAIL_FROM_NAME}
+      #
+      # Automatic Job Cleanup
+      - JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_ENABLED=${JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_ENABLED}
+      - JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_JOB_CRON_EXPRESSION=${JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_JOB_CRON_EXPRESSION}
+      - JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_JOB_CONTEXT_CRON_EXPRESSION=${JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_JOB_CONTEXT_CRON_EXPRESSION}
+      - JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_MAX_AGE=${JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_MAX_AGE}
+      - JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_JOB_BATCH_SIZE=${JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_JOB_BATCH_SIZE}
+      - JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_JOB_CONTEXT_BATCH_SIZE=${JOBSERVICE_SCHEDULED_ARCHIVE_JOB_CLEANUP_JOB_CONTEXT_BATCH_SIZE}
+      # Here AIHUB_CONNECTION_PROTOCOL, AIHUB_CONNECTION_HOST and AIHUB_CONNECTION_PORT shall be the public facing ones
+      - AIHUB_CONNECTION_PROTOCOL=${PUBLIC_PROTOCOL}
+      - AIHUB_CONNECTION_HOST=${PUBLIC_DOMAIN}
+      - AIHUB_CONNECTION_PORT=${PUBLIC_PORT}
+      - AUTH_SERVICE_CLIENT_ID=${AIHUB_BACKEND_SSO_CLIENT_ID}
+      - AUTH_SERVICE_CLIENT_SECRET=${AIHUB_BACKEND_SSO_CLIENT_SECRET}
+      - WEBAPI_REGISTRY_USERNAME=${WEBAPI_REGISTRY_USERNAME}
+      - WEBAPI_REGISTRY_PASSWORD=${WEBAPI_REGISTRY_PASSWORD}
+      - TZ=${TZ}
+      - BROKER_ACTIVEMQ_HOST=aihub-activemq
+      - BROKER_ACTIVEMQ_PORT=61616
+      - BROKER_ACTIVEMQ_USERNAME=${BROKER_ACTIVEMQ_USERNAME}
+      - BROKER_ACTIVEMQ_PASSWORD=${BROKER_ACTIVEMQ_PASSWORD}
+      - REPOSITORIES_MAX_UPLOAD_SIZE=${PROXY_DATA_UPLOAD_LIMIT}
+      - SYNC_PYTHON_SDK_EXTENSION_EXCLUSIONS=${SYNC_PYTHON_SDK_EXTENSION_EXCLUSIONS}
+      - SYNC_TMP_DIR_PYTHON_SDK_EXTENSION_DIR=${SYNC_TMP_DIR_PYTHON_SDK_EXTENSION_DIR}
+      - SYNC_EXECUTION_CONTEXT_EXCLUSIONS=${SYNC_EXECUTION_CONTEXT_EXCLUSIONS}
+      - SYNC_EXTENSION_ENABLED=${SYNC_EXTENSION_ENABLED}
+      - SYNC_PYTHON_SDK_EXTENSION_ENABLED=${SYNC_PYTHON_SDK_EXTENSION_ENABLED}
+      - SYNC_LIBS_ENABLED=${SYNC_LIBS_ENABLED}
+      - SYNC_EXECUTION_CONTEXT_ENABLED=${SYNC_EXECUTION_CONTEXT_ENABLED}
+      - RAPIDMINER_PYTHON_SDK_EXTENSION_DIR=${RAPIDMINER_PYTHON_SDK_EXTENSION_DIR}
+      - LICENSE_MODE=${LICENSE_MODE}
+      # RapidMiner licensing
+      - LICENSE_LICENSE=${LICENSE}
+      # Altair Unit Licensing
+      - LICENSE_AGENT_PROXY_URL=${LICENSE_PROXY_INTERNAL_URL}
+      - LICENSE_AGENT_MACHINE_ID=${LICENSE_AGENT_MACHINE_ID}
+      - RAPIDMINER_LOAD_USER_CERTIFICATES=${RAPIDMINER_LOAD_USER_CERTIFICATES}
+      - SPRING_PROFILES_ACTIVE=${AIHUB_BACKEND_PROFILES_ACTIVE}
+    volumes:
+      - aihub-home-vol:/aihub/home
+    depends_on:
+      aihub-postgresql:
+        condition: service_healthy
+      aihub-activemq:
+        condition: service_healthy
+      license-proxy:
+        condition: service_healthy
+    networks:
+      jupyterhub-user-net:
+        aliases:
+          - aihub-backend
+      platform-int-net:
+        aliases:
+          - aihub-backend
+      aihub-db-net:
+        aliases:
+          - aihub-backend
+    profiles:
+      - aihub-backend
+    healthcheck:
+      test: curl -s http://localhost:8080/api/v1/healthcheck
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+  aihub-job-agent:
+    image: ${REGISTRY}rapidminer-jobagent:${JOBAGENT_VERSION}
+    hostname: aihub-job-agent
+    #cpuset: ${JOBAGENT_CPUSET}
+    restart: always
+    environment:
+      #- LOGGING_LEVEL_COM_RAPIDMINER=DEBUG
+      - SPRING_PROFILES_ACTIVE=${JOBAGENT_SPRING_PROFILES_ACTIVE}
+      - JOBAGENT_NAME=${JOBAGENT_NAME}
+      - JOBAGENT_AUTH_AUTH_SERVER_URL=http://keycloak:8080/auth
+      - JOBAGENT_AUTH_REALM=${SSO_IDP_REALM}
+      - JOBAGENT_AUTH_SERVICE_CLIENT_ID=${JOBAGENT_SSO_CLIENT_ID}
+      - JOBAGENT_AUTH_SERVICE_CLIENT_SECRET=${JOBAGENT_SSO_CLIENT_SECRET}
+      - JOBAGENT_QUEUE_ACTIVEMQ_USERNAME=${BROKER_ACTIVEMQ_USERNAME}
+      - JOBAGENT_QUEUE_ACTIVEMQ_PASSWORD=${BROKER_ACTIVEMQ_PASSWORD}
+      - BROKER_ACTIVEMQ_HOST=aihub-activemq
+      - BROKER_ACTIVEMQ_PORT=61616
+      - BROKER_ACTIVEMQ_USERNAME=${BROKER_ACTIVEMQ_USERNAME}
+      - BROKER_ACTIVEMQ_PASSWORD=${BROKER_ACTIVEMQ_PASSWORD}
+      - AIHUB_CONNECTION_PROTOCOL=http
+      - AIHUB_CONNECTION_HOST=aihub-backend
+      - AIHUB_CONNECTION_PORT=8080
+      - JOBAGENT_CONTAINER_COUNT=${JOBAGENT_CONTAINER_COUNT}
+      - JOBAGENT_QUEUE_JOB_REQUEST=${JOBAGENT_QUEUE_JOB_REQUEST}
+      - JOBAGENT_CONTAINER_MEMORYLIMIT=${JOBAGENT_CONTAINER_MEMORYLIMIT}
+      - INIT_SHARED_CONDA_SETTINGS=${INIT_SHARED_CONDA_SETTINGS}
+      - TZ=${TZ}
+      - JOBAGENT_SYNC_PYTHON_SDK_EXTENSIONS_ENABLED=${JOBAGENT_SYNC_PYTHON_SDK_EXTENSIONS_ENABLED}
+      - JOBAGENT_SYNC_PYTHON_SDK_EXTENSIONS_CLEAN_BEFORE=${JOBAGENT_SYNC_PYTHON_SDK_EXTENSIONS_CLEAN_BEFORE}
+      - JOBAGENT_CONTAINER_PYTHON_SDK_EXTENSIONS_DIR=${JOBAGENT_CONTAINER_PYTHON_SDK_EXTENSIONS_DIR}
+      - LICENSE_MODE=${LICENSE_MODE}
+      # Altair Unit Licensing
+      - JOBAGENT_LICENSE_AGENT_PROXY_URL=${LICENSE_PROXY_INTERNAL_URL}
+      - JOBAGENT_LICENSE_AGENT_MACHINE_ID=${LICENSE_AGENT_MACHINE_ID}
+      - JOBAGENT_CONTAINER_LOAD_USER_CERTIFICATES=${JOBAGENT_CONTAINER_LOAD_USER_CERTIFICATES}
+      - JOBAGENT_CONTAINER_JVM_CUSTOM_OPTIONS=${JOBAGENT_CONTAINER_JVM_CUSTOM_OPTIONS}
+    volumes:
+      - coding-shared-vol:/opt/coding-shared/:ro
+      - job-agent-vol:/jobagent/home
+      - job-agent-huggingface-vol:/home/rapidminer/.cache/huggingface
+    depends_on:
+      aihub-backend:
+        condition: service_healthy
+      aihub-activemq:
+        condition: service_healthy
+      license-proxy:
+        condition: service_healthy
+    networks:
+      platform-int-net:
+        aliases:
+          - aihub-job-agent
+    profiles:
+      - aihub-job-agent
+    healthcheck:
+      test: curl -s http://localhost:8066/system/health
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+  platform-admin:
+    image: "${REGISTRY}rapidminer-platform-admin-webui:${PLATFORM_ADMIN_VERSION}"
+    hostname: platform-admin
+    restart: always
+    environment:
+      - PLATFORM_ADMIN_URL_SUFFIX=${PLATFORM_ADMIN_URL_SUFFIX}
+      - PLATFORM_ADMIN_DATA_UPLOAD_LIMIT=${PROXY_DATA_UPLOAD_LIMIT}
+      - SCORING_AGENT_URL_SUFFIX=${SCORING_AGENT_URL_SUFFIX}
+      - SCORING_AGENT_BACKEND=${SCORING_AGENT_BACKEND}
+      - PUBLIC_DOMAIN=${PUBLIC_DOMAIN}
+      - SSO_PUBLIC_URL=${SSO_PUBLIC_URL}
+      - SSO_IDP_REALM=${SSO_IDP_REALM}
+      - SSO_CLIENT_ID=${PLATFORM_ADMIN_SSO_CLIENT_ID}
+      - SSO_CLIENT_SECRET=${PLATFORM_ADMIN_SSO_CLIENT_SECRET}
+      - PLATFORM_ADMIN_DISABLE_PYTHON=${PLATFORM_ADMIN_DISABLE_PYTHON}
+      - PLATFORM_ADMIN_DISABLE_RTS=${PLATFORM_ADMIN_DISABLE_RTS}
+      - DEBUG=false
+      - CES_VERSION=${CES_VERSION}
+      - TZ=${TZ}
+    volumes:
+      - platform-admin-uploaded-vol:/var/www/html/uploaded/
+    networks:
+      jupyterhub-user-net:
+        aliases:
+          - platform-admin
+      platform-int-net:
+        aliases:
+          - platform-admin
+      coding-environment-storage-net:
+        aliases:
+          - platform-admin
+    profiles:
+      - platform-admin
+    healthcheck:
+      test: service apache2 status
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 5s
+  webapi-gateway:
+    image: ${REGISTRY}rapidminer-webapi-gateway:${WEBAPI_GATEWAY_VERSION}
+    hostname: webapi-gateway
+    container_name: webapi-gateway
+    restart: always
+    environment:
+      - WEBAPI_REGISTRY_HOST=${PUBLIC_DOMAIN}
+      - WEBAPI_REGISTRY_PROTOCOL=${PUBLIC_PROTOCOL}
+      - WEBAPI_REGISTRY_PORT=${PUBLIC_PORT}
+      - WEBAPI_REGISTRY_USERNAME=${WEBAPI_REGISTRY_USERNAME}
+      - WEBAPI_REGISTRY_PASSWORD=${WEBAPI_REGISTRY_PASSWORD}
+      - SPRING_CLOUD_GATEWAY_HTTPCLIENT_CONNECT_TIMEOUT=${WEBAPI_GATEWAY_SPRING_CLOUD_GATEWAY_HTTPCLIENT_CONNECT_TIMEOUT}
+      - SPRING_CLOUD_GATEWAY_HTTPCLIENT_RESPONSE_TIMEOUT=${WEBAPI_GATEWAY_SPRING_CLOUD_GATEWAY_HTTPCLIENT_RESPONSE_TIMEOUT}
+      - RETRY_BACKOFF_ENABLED=${WEBAPI_GATEWAY_RETRY_BACKOFF_ENABLED}
+      - RETRY_BACKOFF_INTERVAL=${WEBAPI_GATEWAY_RETRY_BACKOFF_INTERVAL}
+      - RETRY_EXCEPTIONS=${WEBAPI_GATEWAY_RETRY_EXCEPTIONS}
+      - RETRY_METHODS=${WEBAPI_GATEWAY_RETRY_METHODS}
+      - RETRY_STATUS=${WEBAPI_GATEWAY_RETRY_STATUS}
+      - RETRY_SERIES=${WEBAPI_GATEWAY_RETRY_SERIES}
+      - RETRY_GROUP_RETRIES=${WEBAPI_GATEWAY_RETRY_GROUP_RETRIES}
+      - RETRY_AGENT_RETRIES=${WEBAPI_GATEWAY_RETRY_AGENT_RETRIES}
+      - LOADBALANCER_CLEAN_UP_INTERVAL=${WEBAPI_GATEWAY_LOADBALANCER_CLEAN_UP_INTERVAL}
+      - LOADBALANCER_REQUEST_TIMEOUT=${WEBAPI_GATEWAY_LOADBALANCER_REQUEST_TIMEOUT}
+      - LOADBALANCER_REQUEST_INTERVAL=${WEBAPI_GATEWAY_LOADBALANCER_REQUEST_INTERVAL}
+      - LOADBALANCER_METRIC_STYLE=${WEBAPI_GATEWAY_LOADBALANCER_METRIC_STYLE}
+      - TZ=${TZ}
+      - SPRING_PROFILES_ACTIVE=${WEBAPI_GATEWAY_PROFILES_ACTIVE}
+    depends_on:
+      license-proxy:
+        condition: service_healthy
+      aihub-backend:
+        condition: service_healthy
+    profiles:
+      - aihub-webapi-gateway
+    networks:
+      panopticon-net:
+      platform-int-net:
+        aliases:
+          - aihub-webapi-gateway
+    healthcheck:
+      test: curl -s http://localhost:8099/system/health
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+  webapi-agent-1:
+    image: ${REGISTRY}rapidminer-scoringagent:${WEBAPI_AGENT_VERSION}
+    hostname: webapi-agent-1
+    container_name: webapi-agent-1
+    #cpuset: ${WEBAPI_AGENT_CPUSET_1}
+    restart: always
+    environment:
+      - TZ=${TZ}
+      - CES_VERSION=${CES_VERSION}
+      - INIT_SHARED_CONDA_SETTINGS=true
+      - SPRING_PROFILES_ACTIVE=${WEBAPI_AGENT_SPRING_PROFILES_ACTIVE}
+      - SCORING_AGENT_MAX_UPLOAD_SIZE=${PROXY_DATA_UPLOAD_LIMIT}
+      - RAPIDMINER_SCORING_AGENT_OPTS=${WEBAPIAGENT_OPTS}
+      - SCORING_AGENT_CACHE_REPOSITORY_CLEAR_ON_COLLECTION=${WEBAPI_AGENT_CACHE_REPOSITORY_CLEAR_ON_COLLECTION}
+      - SCORING_AGENT_CACHE_REPOSITORY_MAXIMUM_SIZE=${WEBAPI_AGENT_CACHE_REPOSITORY_MAXIMUM_SIZE}
+      - SCORING_AGENT_CACHE_REPOSITORY_ACCESS_EXPIRATION=${WEBAPI_AGENT_CACHE_REPOSITORY_ACCESS_EXPIRATION}
+      - SCORING_AGENT_CACHE_REPOSITORY_COPY_CACHED_IOOBJECTS=${WEBAPI_AGENT_CACHE_REPOSITORY_COPY_CACHED_IOOBJECTS}
+      - SCORING_AGENT_CORS_PATH_PATTERN=${WEBAPI_AGENT_CORS_PATH_PATTERN}
+      - SCORING_AGENT_CORS_ALLOWED_METHODS=${WEBAPI_AGENT_CORS_ALLOWED_METHODS}
+      - SCORING_AGENT_CORS_ALLOWED_HEADERS=${WEBAPI_AGENT_CORS_ALLOWED_HEADERS}
+      - SCORING_AGENT_CORS_ALLOWED_ORIGINS=${WEBAPI_AGENT_CORS_ALLOWED_ORIGINS}
+      - SCORING_AGENT_REST_CONTEXT_PATH=${WEBAPI_AGENT_REST_CONTEXT_PATH}
+      - SCORING_AGENT_TASK_SCHEDULER_POOL_SIZE=${WEBAPI_AGENT_TASK_SCHEDULER_POOL_SIZE}
+      - SCORING_AGENT_TASK_SCHEDULER_THREAD_PRIORITY=${WEBAPI_AGENT_TASK_SCHEDULER_THREAD_PRIORITY}
+      - SCORING_AGENT_EXECUTION_CLEANUP_ENABLED=${WEBAPI_AGENT_EXECUTION_CLEANUP_ENABLED}
+      - SCORING_AGENT_EXECUTION_CLEANUP_CRON_EXPRESSION=${WEBAPI_AGENT_EXECUTION_CLEANUP_CRON_EXPRESSION}
+      - SCORING_AGENT_EXECUTION_CLEANUP_TIMEOUT=${WEBAPI_AGENT_EXECUTION_CLEANUP_TIMEOUT}
+      - SCORING_AGENT_EXECUTION_CLEANUP_WAIT_BETWEEN=${WEBAPI_AGENT_EXECUTION_CLEANUP_WAIT_BETWEEN}
+      - SCORING_AGENT_EXECUTION_TIMEOUT=${WEBAPI_AGENT_EXECUTION_TIMEOUT}
+      - SCORING_AGENT_RAPIDMINER_CHECK_SYNC=${WEBAPI_AGENT_RAPIDMINER_CHECK_SYNC}
+      - SCORING_AGENT_RAPIDMINER_MAX_CHECK_COUNT=${WEBAPI_AGENT_RAPIDMINER_MAX_CHECK_COUNT}
+      - SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_ENABLED=${WEBAPI_AGENT_SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_ENABLED}
+      - SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_CLEAN_BEFORE=${WEBAPI_AGENT_SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_CLEAN_BEFORE}
+      - SCORING_AGENT_RAPIDMINER_PYTHON_SDK_EXTENSION_DIR=${WEBAPI_AGENT_SCORING_AGENT_RAPIDMINER_PYTHON_SDK_EXTENSION_DIR}
+      - SCORING_AGENT_AUDIT_ENABLED=${WEBAPI_AGENT_AUDIT_ENABLED}
+      #- LOGGING_LEVEL_ROOT=DEBUG
+      - SCORING_AGENT_AUTH_REALM=${SSO_IDP_REALM}
+      - SCORING_AGENT_AUTH_AUTH_SERVER_URL=${SSO_PUBLIC_URL}/auth
+      - SCORING_AGENT_AUTH_SERVICE_CLIENT_ID=${WEBAPI_AGENT_SSO_CLIENT_ID}
+      - SCORING_AGENT_AUTH_SERVICE_CLIENT_SECRET=${WEBAPI_AGENT_SSO_CLIENT_SECRET}
+      - LICENSE_MODE=${SCORING_AGENT_LICENSE_MODE:-$LICENSE_MODE}
+      # RapidMiner licensing
+      - WAIT_FOR_LICENSES=${WAIT_FOR_LICENSES}
+      - SCORING_AGENT_ENABLE_SERVER_LICENSE=${SCORING_AGENT_ENABLE_SERVER_LICENSE}
+      - LICENSE_LICENSE=${LICENSE}
+      # Altair Unit Licensing
+      - SCORING_AGENT_LICENSE_AGENT_PROXY_URL=${LICENSE_PROXY_INTERNAL_URL}
+      - SCORING_AGENT_LICENSE_AGENT_MACHINE_ID=${LICENSE_AGENT_MACHINE_ID}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=${SSO_PUBLIC_URL}/auth/realms/${SSO_IDP_REALM}
+      - WEBAPI_REGISTRY_HOST=${PUBLIC_DOMAIN}
+      - WEBAPI_REGISTRY_PROTOCOL=${PUBLIC_PROTOCOL}
+      - WEBAPI_REGISTRY_PORT=${PUBLIC_PORT}
+      - WEBAPI_REGISTRY_USERNAME=${WEBAPI_REGISTRY_USERNAME}
+      - WEBAPI_REGISTRY_PASSWORD=${WEBAPI_REGISTRY_PASSWORD}
+      - AIHUB_CONNECTION_PROTOCOL=${PUBLIC_PROTOCOL}
+      - AIHUB_CONNECTION_HOST=${PUBLIC_DOMAIN}
+      - AIHUB_CONNECTION_PORT=${PUBLIC_PORT}
+      - EUREKA_INSTANCE_HOSTNAME=webapi-agent-1
+      - EUREKA_INSTANCE_PREFER_IP_ADDRESS=false
+      - SCORING_AGENT_RAPIDMINER_LOAD_USER_CERTIFICATES=${SCORING_AGENT_RAPIDMINER_LOAD_USER_CERTIFICATES}
+      - WEBAPI_GROUP_NAME=${WEBAPI_1_GROUP_NAME:-$WEBAPI_GROUP_NAME}
+    networks:
+      panopticon-net:
+      platform-int-net:
+        aliases:
+          - aihub-webapi-agent-1
+    profiles:
+      - aihub-webapi-agent-1
+    volumes:
+      # Uncomment the below line to specify the Altair license file for Scoring Agent in case of LICENSE_MODE=ALTAIR_STANDALONE
+      # - ${PWD}/altair_standalone.dat:/scoring-agent/home/resources/licenses/altair_standalone.dat
+      - webapi-agent-1:/scoring-agent/home
+      - coding-shared-vol:/opt/coding-shared/:ro
+    depends_on:
+      webapi-gateway:
+        condition: service_healthy
+      license-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: curl -s http://localhost:8090/system/health
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+  webapi-agent-2:
+    image: ${REGISTRY}rapidminer-scoringagent:${WEBAPI_AGENT_VERSION}
+    hostname: webapi-agent-2
+    container_name: webapi-agent-2
+    #cpuset: ${WEBAPI_AGENT_CPUSET_2}
+    restart: always
+    environment:
+      - TZ=${TZ}
+      - CES_VERSION=${CES_VERSION}
+      - INIT_SHARED_CONDA_SETTINGS=true
+      - SPRING_PROFILES_ACTIVE=${WEBAPI_AGENT_SPRING_PROFILES_ACTIVE}
+      - SCORING_AGENT_MAX_UPLOAD_SIZE=${PROXY_DATA_UPLOAD_LIMIT}
+      - RAPIDMINER_SCORING_AGENT_OPTS=${WEBAPIAGENT_OPTS}
+      #- LOGGING_LEVEL_ROOT=DEBUG
+      - SCORING_AGENT_CACHE_REPOSITORY_CLEAR_ON_COLLECTION=${WEBAPI_AGENT_CACHE_REPOSITORY_CLEAR_ON_COLLECTION}
+      - SCORING_AGENT_CACHE_REPOSITORY_MAXIMUM_SIZE=${WEBAPI_AGENT_CACHE_REPOSITORY_MAXIMUM_SIZE}
+      - SCORING_AGENT_CACHE_REPOSITORY_ACCESS_EXPIRATION=${WEBAPI_AGENT_CACHE_REPOSITORY_ACCESS_EXPIRATION}
+      - SCORING_AGENT_CACHE_REPOSITORY_COPY_CACHED_IOOBJECTS=${WEBAPI_AGENT_CACHE_REPOSITORY_COPY_CACHED_IOOBJECTS}
+      - SCORING_AGENT_CORS_PATH_PATTERN=${WEBAPI_AGENT_CORS_PATH_PATTERN}
+      - SCORING_AGENT_CORS_ALLOWED_METHODS=${WEBAPI_AGENT_CORS_ALLOWED_METHODS}
+      - SCORING_AGENT_CORS_ALLOWED_HEADERS=${WEBAPI_AGENT_CORS_ALLOWED_HEADERS}
+      - SCORING_AGENT_CORS_ALLOWED_ORIGINS=${WEBAPI_AGENT_CORS_ALLOWED_ORIGINS}
+      - SCORING_AGENT_REST_CONTEXT_PATH=${WEBAPI_AGENT_REST_CONTEXT_PATH}
+      - SCORING_AGENT_TASK_SCHEDULER_POOL_SIZE=${WEBAPI_AGENT_TASK_SCHEDULER_POOL_SIZE}
+      - SCORING_AGENT_TASK_SCHEDULER_THREAD_PRIORITY=${WEBAPI_AGENT_TASK_SCHEDULER_THREAD_PRIORITY}
+      - SCORING_AGENT_EXECUTION_CLEANUP_ENABLED=${WEBAPI_AGENT_EXECUTION_CLEANUP_ENABLED}
+      - SCORING_AGENT_EXECUTION_CLEANUP_CRON_EXPRESSION=${WEBAPI_AGENT_EXECUTION_CLEANUP_CRON_EXPRESSION}
+      - SCORING_AGENT_EXECUTION_CLEANUP_TIMEOUT=${WEBAPI_AGENT_EXECUTION_CLEANUP_TIMEOUT}
+      - SCORING_AGENT_EXECUTION_CLEANUP_WAIT_BETWEEN=${WEBAPI_AGENT_EXECUTION_CLEANUP_WAIT_BETWEEN}
+      - SCORING_AGENT_EXECUTION_TIMEOUT=${WEBAPI_AGENT_EXECUTION_TIMEOUT}
+      - SCORING_AGENT_RAPIDMINER_CHECK_SYNC=${WEBAPI_AGENT_RAPIDMINER_CHECK_SYNC}
+      - SCORING_AGENT_RAPIDMINER_MAX_CHECK_COUNT=${WEBAPI_AGENT_RAPIDMINER_MAX_CHECK_COUNT}
+      - SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_ENABLED=${WEBAPI_AGENT_SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_ENABLED}
+      - SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_CLEAN_BEFORE=${WEBAPI_AGENT_SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_CLEAN_BEFORE}
+      - SCORING_AGENT_RAPIDMINER_PYTHON_SDK_EXTENSION_DIR=${WEBAPI_AGENT_SCORING_AGENT_RAPIDMINER_PYTHON_SDK_EXTENSION_DIR}
+      - SCORING_AGENT_AUDIT_ENABLED=${WEBAPI_AGENT_AUDIT_ENABLED}
+      - SCORING_AGENT_AUTH_REALM=${SSO_IDP_REALM}
+      - SCORING_AGENT_AUTH_AUTH_SERVER_URL=${SSO_PUBLIC_URL}/auth
+      - SCORING_AGENT_AUTH_SERVICE_CLIENT_ID=${WEBAPI_AGENT_SSO_CLIENT_ID}
+      - SCORING_AGENT_AUTH_SERVICE_CLIENT_SECRET=${WEBAPI_AGENT_SSO_CLIENT_SECRET}
+      - LICENSE_MODE=${SCORING_AGENT_LICENSE_MODE:-$LICENSE_MODE}
+      # RapidMiner licensing
+      - WAIT_FOR_LICENSES=${WAIT_FOR_LICENSES}
+      - SCORING_AGENT_ENABLE_SERVER_LICENSE=${SCORING_AGENT_ENABLE_SERVER_LICENSE}
+      - LICENSE_LICENSE=${LICENSE}
+      # Altair Unit Licensing
+      - SCORING_AGENT_LICENSE_AGENT_PROXY_URL=${LICENSE_PROXY_INTERNAL_URL}
+      - SCORING_AGENT_LICENSE_AGENT_MACHINE_ID=${LICENSE_AGENT_MACHINE_ID}
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=${SSO_PUBLIC_URL}/auth/realms/${SSO_IDP_REALM}
+      - WEBAPI_REGISTRY_HOST=${PUBLIC_DOMAIN}
+      - WEBAPI_REGISTRY_PROTOCOL=${PUBLIC_PROTOCOL}
+      - WEBAPI_REGISTRY_PORT=${PUBLIC_PORT}
+      - WEBAPI_REGISTRY_USERNAME=${WEBAPI_REGISTRY_USERNAME}
+      - WEBAPI_REGISTRY_PASSWORD=${WEBAPI_REGISTRY_PASSWORD}
+      - AIHUB_CONNECTION_PROTOCOL=${PUBLIC_PROTOCOL}
+      - AIHUB_CONNECTION_HOST=${PUBLIC_DOMAIN}
+      - AIHUB_CONNECTION_PORT=${PUBLIC_PORT}
+      - EUREKA_INSTANCE_HOSTNAME=webapi-agent-2
+      - EUREKA_INSTANCE_PREFER_IP_ADDRESS=false
+      - SCORING_AGENT_RAPIDMINER_LOAD_USER_CERTIFICATES=${SCORING_AGENT_RAPIDMINER_LOAD_USER_CERTIFICATES}
+      - WEBAPI_GROUP_NAME=${WEBAPI_2_GROUP_NAME:-$WEBAPI_GROUP_NAME}
+    networks:
+      panopticon-net:
+      platform-int-net:
+        aliases:
+          - aihub-webapi-agent-2
+    profiles:
+      - aihub-webapi-agent-2
+    volumes:
+      - webapi-agent-2:/scoring-agent/home
+      - coding-shared-vol:/opt/coding-shared/:ro
+    depends_on:
+      webapi-gateway:
+        condition: service_healthy
+      license-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: curl -s http://localhost:8090/system/health
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+  scoring-agent:
+    image: "${REGISTRY}rapidminer-scoringagent:${SCORING_AGENT_VERSION}"
+    hostname: scoring-agent
+    restart: always
+    #cpuset: ${SCORING_AGENT_CPUSET}
+    environment:
+      - TZ=${TZ}
+      - CES_VERSION=${CES_VERSION}
+      - INIT_SHARED_CONDA_SETTINGS=true
+      - SPRING_PROFILES_ACTIVE=${SCORING_AGENT_SPRING_PROFILES_ACTIVE}
+      - SCORING_AGENT_MAX_UPLOAD_SIZE=${PROXY_DATA_UPLOAD_LIMIT}
+      - SCORING_AGENT_CACHE_REPOSITORY_CLEAR_ON_COLLECTION=${SCORING_AGENT_CACHE_REPOSITORY_CLEAR_ON_COLLECTION}
+      - SCORING_AGENT_CACHE_REPOSITORY_MAXIMUM_SIZE=${SCORING_AGENT_CACHE_REPOSITORY_MAXIMUM_SIZE}
+      - SCORING_AGENT_CACHE_REPOSITORY_ACCESS_EXPIRATION=${SCORING_AGENT_CACHE_REPOSITORY_ACCESS_EXPIRATION}
+      - SCORING_AGENT_CACHE_REPOSITORY_COPY_CACHED_IOOBJECTS=${SCORING_AGENT_CACHE_REPOSITORY_COPY_CACHED_IOOBJECTS}
+      - SCORING_AGENT_CORS_PATH_PATTERN=${SCORING_AGENT_CORS_PATH_PATTERN}
+      - SCORING_AGENT_CORS_ALLOWED_METHODS=${SCORING_AGENT_CORS_ALLOWED_METHODS}
+      - SCORING_AGENT_CORS_ALLOWED_HEADERS=${SCORING_AGENT_CORS_ALLOWED_HEADERS}
+      - SCORING_AGENT_CORS_ALLOWED_ORIGINS=${SCORING_AGENT_CORS_ALLOWED_ORIGINS}
+      - SCORING_AGENT_REST_CONTEXT_PATH=${SCORING_AGENT_REST_CONTEXT_PATH}
+      - SCORING_AGENT_TASK_SCHEDULER_POOL_SIZE=${SCORING_AGENT_TASK_SCHEDULER_POOL_SIZE}
+      - SCORING_AGENT_TASK_SCHEDULER_THREAD_PRIORITY=${SCORING_AGENT_TASK_SCHEDULER_THREAD_PRIORITY}
+      - SCORING_AGENT_EXECUTION_CLEANUP_ENABLED=${SCORING_AGENT_EXECUTION_CLEANUP_ENABLED}
+      - SCORING_AGENT_EXECUTION_CLEANUP_CRON_EXPRESSION=${SCORING_AGENT_EXECUTION_CLEANUP_CRON_EXPRESSION}
+      - SCORING_AGENT_EXECUTION_CLEANUP_TIMEOUT=${SCORING_AGENT_EXECUTION_CLEANUP_TIMEOUT}
+      - SCORING_AGENT_EXECUTION_CLEANUP_WAIT_BETWEEN=${SCORING_AGENT_EXECUTION_CLEANUP_WAIT_BETWEEN}
+      - SCORING_AGENT_EXECUTION_TIMEOUT=${SCORING_AGENT_EXECUTION_TIMEOUT}
+      - SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_ENABLED=${SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_ENABLED}
+      - SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_CLEAN_BEFORE=${SCORING_AGENT_SYNC_PYTHON_SDK_EXTENSIONS_CLEAN_BEFORE}
+      - SCORING_AGENT_RAPIDMINER_PYTHON_SDK_EXTENSION_DIR=${SCORING_AGENT_RAPIDMINER_PYTHON_SDK_EXTENSION_DIR}
+      - SCORING_AGENT_RAPIDMINER_CHECK_SYNC=${SCORING_AGENT_RAPIDMINER_CHECK_SYNC}
+      - SCORING_AGENT_RAPIDMINER_MAX_CHECK_COUNT=${SCORING_AGENT_RAPIDMINER_MAX_CHECK_COUNT}
+      - SCORING_AGENT_AUDIT_ENABLED=${SCORING_AGENT_AUDIT_ENABLED}
+      # - DEBUG=true
+      - SCORING_AGENT_AUTH_REALM=${SSO_IDP_REALM}
+      - SCORING_AGENT_AUTH_AUTH_SERVER_URL=${SSO_PUBLIC_URL}/auth
+      - SCORING_AGENT_AUTH_SERVICE_CLIENT_ID=${SCORING_AGENT_SSO_CLIENT_ID}
+      - SCORING_AGENT_AUTH_SERVICE_CLIENT_SECRET=${SCORING_AGENT_SSO_CLIENT_SECRET}
+      - LICENSE_MODE=${SCORING_AGENT_LICENSE_MODE:-$LICENSE_MODE}
+      # RapidMiner licensing
+      - WAIT_FOR_LICENSES=${WAIT_FOR_LICENSES}
+      - SCORING_AGENT_ENABLE_SERVER_LICENSE=${SCORING_AGENT_ENABLE_SERVER_LICENSE}
+      - LICENSE_LICENSE=${LICENSE}
+      # Altair Unit Licensing
+      - SCORING_AGENT_LICENSE_AGENT_PROXY_URL=${LICENSE_PROXY_INTERNAL_URL}
+      - SCORING_AGENT_LICENSE_AGENT_MACHINE_ID=${LICENSE_AGENT_MACHINE_ID}
+      - SCORING_AGENT_RAPIDMINER_LOAD_USER_CERTIFICATES=${SCORING_AGENT_RAPIDMINER_LOAD_USER_CERTIFICATES}
+    volumes:
+      # Uncomment the below line to specify the Altair license file for Scoring Agent in case of LICENSE_MODE=ALTAIR_STANDALONE
+      # - ${PWD}/altair_standalone.dat:/scoring-agent/home/resources/licenses/altair_standalone.dat
+      - coding-shared-vol:/opt/coding-shared/:ro
+      - scoring-agent-vol:/scoring-agent/home
+    depends_on:
+      # In case of LICENSE_MODE=ALTAIR_STANDALONE, set mac_address according to the Ethernet address of the docker host.
+      # It shall match the MAC address in your license.
+      # mac_address: 00:00:00:00:00:00
+      license-proxy:
+        condition: service_healthy
+    networks:
+      platform-int-net:
+        aliases:
+          - scoring-agent
+    profiles:
+      - scoring-agent
+    healthcheck:
+      test: bash -c "exec 6<> /dev/tcp/localhost/8090"
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+  jupyterhub-db:
+    image: ${REGISTRY}rapidminer-jupyterhub-postgres:${JUPYTERHUB_VERSION}
+    hostname: jupyterhub-db
+    restart: always
+    environment:
+      - POSTGRES_DB=${JUPYTERHUB_DBSCHEMA}
+      - POSTGRES_USER=${JUPYTERHUB_DBUSER}
+      - POSTGRES_PASSWORD=${JUPYTERHUB_DBPASS}
+      - POSTGRES_INITDB_ARGS=${JUPYTERHUB_POSTGRES_INITDB_ARGS}
+      - TZ=${TZ}
+      - PGTZ=${TZ}
+    volumes:
+      - jupyterhub-db-vol:/var/lib/postgresql/data
+    networks:
+      jupyterhub-user-net:
+        aliases:
+          - jupyterhub-db
+    profiles:
+      - jupyter
+    healthcheck:
+      test: pg_isready -d ${JUPYTERHUB_DBSCHEMA} -U ${JUPYTERHUB_DBUSER}
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+  jupyternotebook:
+    image: ${REGISTRY}rapidminer-jupyter_notebook:${JUPYTERHUB_NOTEBOOK_VERSION}
+    restart: "no"
+    entrypoint:
+      - /bin/bash
+      - -c
+      - "exit 0"
+  jupyterhub:
+    image: "${REGISTRY}rapidminer-jupyterhub-jupyterhub:${JUPYTERHUB_VERSION}"
+    hostname: jupyterhub
+    restart: always
+    environment:
+      - JUPYTERHUB_VERSION=${JUPYTERHUB_VERSION}
+      - AIHUB_BACKEND=${AIHUB_BACKEND}
+      - JUPYTERHUB_DBHOST=${JUPYTERHUB_DBHOST}
+      - JUPYTERHUB_DBSCHEMA=${JUPYTERHUB_DBSCHEMA}
+      - JUPYTERHUB_DBUSER=${JUPYTERHUB_DBUSER}
+      - JUPYTERHUB_DBPASS=${JUPYTERHUB_DBPASS}
+      - JUPYTERHUB_HOSTNAME=${JUPYTERHUB_HOSTNAME}
+      - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY}
+      - JUPYTERHUB_DEBUG=${JUPYTERHUB_DEBUG}
+      - JUPYTERHUB_TOKEN_DEBUG=${JUPYTERHUB_TOKEN_DEBUG}
+      - JUPYTERHUB_PROXY_DEBUG=${JUPYTERHUB_PROXY_DEBUG}
+      - JUPYTERHUB_DB_DEBUG=${JUPYTERHUB_DB_DEBUG}
+      - JUPYTERHUB_SPAWNER_DEBUG=${JUPYTERHUB_SPAWNER_DEBUG}
+      - JUPYTERHUB_STACK_NAME=${JUPYTERHUB_STACK_NAME}
+      - PUBLIC_URL=${PUBLIC_URL}
+      - JUPYTERHUB_URL_SUFFIX=${JUPYTERHUB_URL_SUFFIX}
+      - SSO_PUBLIC_URL=${SSO_PUBLIC_URL}
+      - SSO_IDP_REALM=${SSO_IDP_REALM}
+      - SSO_CLIENT_ID=${JUPYTERHUB_SSO_CLIENT_ID}
+      - SSO_CLIENT_SECRET=${JUPYTERHUB_SSO_CLIENT_SECRET}
+      - JUPYTERHUB_SPAWNER=${JUPYTERHUB_SPAWNER}
+      - JUPYTERHUB_API_PROTOCOL=${JUPYTERHUB_API_PROTOCOL}
+      - JUPYTERHUB_API_HOSTNAME=${JUPYTERHUB_API_HOSTNAME}
+      - JUPYTERHUB_PROXY_PORT=${JUPYTERHUB_PROXY_PORT}
+      - JUPYTERHUB_API_PORT=${JUPYTERHUB_API_PORT}
+      - JUPYTERHUB_APP_PORT=${JUPYTERHUB_APP_PORT}
+      # - JUPYTERHUB_CUSTOM_CA_CERTS=${JUPYTERHUB_CUSTOM_CA_CERTS}
+      - JUPYTERHUB_DOCKER_DISABLE_NOTEBOOK_IMAGE_PULL_AT_STARTUP=${JUPYTERHUB_DOCKER_DISABLE_NOTEBOOK_IMAGE_PULL_AT_STARTUP}
+      - SSO_USERNAME_KEY=preferred_username
+      - SSO_RESOURCE_ACCESS_KEY=resource_access
+      - JUPYTERHUB_DEFAULT_ENV_NAME=aihub-${JUPYTERHUB_VERSION}-python
+      # Notebook
+      # kubespawner
+      #      - JUPYTERHUB_NOTEBOOK_KUBERNETES_NAMESPACE=${JUPYTERHUB_NOTEBOOK_KUBERNETES_NAMESPACE}
+      #      - JUPYTERHUB_NOTEBOOK_KUBERNETES_NODE_SELECTOR_NAME=${JUPYTERHUB_NOTEBOOK_KUBERNETES_NODE_SELECTOR_NAME}
+      #      - JUPYTERHUB_NOTEBOOK_KUBERNETES_NODE_SELECTOR_VALUE=${JUPYTERHUB_NOTEBOOK_KUBERNETES_NODE_SELECTOR_VALUE}
+      #      - JUPYTERHUB_NOTEBOOK_HOME_KUBERNETES_STORAGE_ACCESS_MODE=${JUPYTERHUB_NOTEBOOK_HOME_KUBERNETES_STORAGE_ACCESS_MODE}
+      #      - JUPYTERHUB_NOTEBOOK_HOME_KUBERNETES_STORAGE_CAPACITY=${JUPYTERHUB_NOTEBOOK_HOME_KUBERNETES_STORAGE_CAPACITY}
+      #      - JUPYTERHUB_NOTEBOOK_HOME_KUBERNETES_STORAGE_CLASS=${JUPYTERHUB_NOTEBOOK_HOME_KUBERNETES_STORAGE_CLASS}
+      #      - JUPYTERHUB_NOTEBOOK_IMAGE_PULL_SECRET=${JUPYTERHUB_NOTEBOOK_IMAGE_PULL_SECRET}
+      #      - JUPYTERHUB_NOTEBOOK_SHARED_ENV_VOLUME_NAME_KUBESPAWNER=${JUPYTERHUB_NOTEBOOK_SHARED_ENV_VOLUME_NAME_KUBESPAWNER}
+      #      - JUPYTERHUB_NOTEBOOK_SHARED_ENV_VOLUME_SUBPATH_KUBESPAWNER=${JUPYTERHUB_NOTEBOOK_SHARED_ENV_VOLUME_SUBPATH_KUBESPAWNER}
+      - DOCKER_NOTEBOOK_IMAGE=${REGISTRY}rapidminer-jupyter_notebook:${JUPYTERHUB_NOTEBOOK_VERSION}
+      - JUPYTERHUB_NOTEBOOK_VERSION=${JUPYTERHUB_NOTEBOOK_VERSION}
+      - JUPYTERHUB_NOTEBOOK_SSO_NB_UID_KEY=${JUPYTERHUB_NOTEBOOK_SSO_NB_UID_KEY}
+      - JUPYTERHUB_NOTEBOOK_SSO_NB_GID_KEY=${JUPYTERHUB_NOTEBOOK_SSO_NB_GID_KEY}
+      - JUPYTERHUB_NOTEBOOK_SSO_CUSTOM_BIND_MOUNTS_KEY=${JUPYTERHUB_NOTEBOOK_SSO_CUSTOM_BIND_MOUNTS_KEY}
+      - JUPYTERHUB_NOTEBOOK_CUSTOM_BIND_MOUNTS=${JUPYTERHUB_NOTEBOOK_CUSTOM_BIND_MOUNTS}
+      - JUPYTERHUB_NOTEBOOK_CPU_LIMIT=${JUPYTERHUB_NOTEBOOK_CPU_LIMIT}
+      - JUPYTERHUB_NOTEBOOK_MEM_LIMIT=${JUPYTERHUB_NOTEBOOK_MEM_LIMIT}
+      - JUPYTERHUB_NOTEBOOK_SHARED_ENV_VOLUME_NAME_DOCKERSPAWNER=${JUPYTERHUB_NOTEBOOK_SHARED_ENV_VOLUME_NAME_DOCKERSPAWNER}
+      - TZ=${TZ}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    depends_on:
+      jupyterhub-db:
+        condition: service_healthy
+    networks:
+      platform-int-net:
+        aliases:
+          - jupyterhub
+      jupyterhub-user-net:
+        aliases:
+          - jupyterhub
+    profiles:
+      - jupyter
+    healthcheck:
+      test: bash -c "exec 6<> /dev/tcp/localhost/8000"
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+  coding-environment-storage:
+    image: "${REGISTRY}rapidminer-coding-environment-storage:${CES_VERSION}"
+    hostname: coding-environment-storage
+    restart: always
+    environment:
+      - PLATFORM_ADMIN_BACKEND=${PLATFORM_ADMIN_BACKEND}
+      - PLATFORM_ADMIN_SYNC_DEBUG=False
+      - DISABLE_DEFAULT_CHANNELS=${DISABLE_DEFAULT_CHANNELS}
+      - CONDA_CHANNEL_PRIORITY=${CONDA_CHANNEL_PRIORITY}
+      - HTTP_PROXY=${HTTP_PROXY}
+      - HTTPS_PROXY=${HTTPS_PROXY}
+      - NO_PROXY=${NO_PROXY}
+      - TZ=${TZ}
+    networks:
+      coding-environment-storage-net:
+        aliases:
+          - coding-environment-storage
+    volumes:
+      - coding-shared-vol:/opt/coding-shared/
+    profiles:
+      - ces
+  grafana-init:
+    image: "${REGISTRY}rapidminer-grafana-init:${GRAFANA_UTILS_VERSION}"
+    restart: "no"
+    environment:
+    - TZ=${TZ}
+    volumes:
+      - grafana-home-vol:/var/lib/grafana
+      - grafana-provisioning:/etc/grafana/provisioning
+    profiles:
+      - grafana
+  grafana:
+    image: "${OFFICIAL_GRAFANA_IMAGE}"
+    hostname: grafana
+    restart: always
+    environment:
+      - GF_SECURITY_ANGULAR_SUPPORT_ENABLED=${GF_SECURITY_ANGULAR_SUPPORT_ENABLED:-true}
+      - GF_PATHS_DATA=${GF_PATHS_DATA:-/var/lib/grafana/aihub}
+      - GF_PATHS_PLUGINS=${GF_PATHS_PLUGINS:-/var/lib/grafana/aihub/plugins}
+      - GF_AUTH_GENERIC_OAUTH_AUTH_URL=${GF_AUTH_GENERIC_OAUTH_AUTH_URL}
+      - GF_AUTH_GENERIC_OAUTH_TOKEN_URL=${GF_AUTH_GENERIC_OAUTH_TOKEN_URL}
+      - GF_AUTH_GENERIC_OAUTH_API_URL=${GF_AUTH_GENERIC_OAUTH_API_URL}
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET=${GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET}
+      - GF_AUTH_SIGNOUT_REDIRECT_URL=${GF_AUTH_SIGNOUT_REDIRECT_URL}
+      - GF_SERVER_ROOT_URL=${GF_SERVER_ROOT_URL}
+      - GF_USERS_DEFAULT_THEME=${GF_USERS_DEFAULT_THEME:-light}
+      - GF_PANELS_DISABLE_SANITIZE_HTML=${GF_PANELS_DISABLE_SANITIZE_HTML:-true}
+      - GF_SERVER_SERVE_FROM_SUB_PATH=${GF_SERVER_SERVE_FROM_SUB_PATH:-true}
+      - GF_AUTH_DISABLE_LOGIN_FORM=${GF_AUTH_DISABLE_LOGIN_FORM:-true}
+      - GF_AUTH_AUTO_LOGIN=${GF_AUTH_AUTO_LOGIN:-true}
+      - GF_AUTH_BASIC_ENABLED=${GF_AUTH_BASIC_ENABLED:-false}
+      - GF_AUTH_GENERIC_OAUTH_ENABLED=${GF_AUTH_GENERIC_OAUTH_ENABLED:-true}
+      - GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP=${GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP:-true}
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_ID=${GF_AUTH_GENERIC_OAUTH_CLIENT_ID:-grafana}
+      - GF_USERS_EXTERNAL_MANAGE_LINK_NAME=${GF_USERS_EXTERNAL_MANAGE_LINK_NAME:-false}
+      - GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH=${GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH:-contains(grafana_roles[*], 'admin') && 'Admin' || contains(grafana_roles[*], 'editor') && 'Editor' || 'Viewer'}
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=${GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS:-rapidminer-aihub-datasource}
+      - GF_AUTH_GENERIC_OAUTH_SCOPES=${GF_AUTH_GENERIC_OAUTH_SCOPES:-email}
+      - GF_DATAPROXY_TIMEOUT=${GF_DATAPROXY_TIMEOUT:-60}
+      - TZ=${TZ}
+    volumes:
+      - grafana-home-vol:/var/lib/grafana
+      - grafana-provisioning:/etc/grafana/provisioning
+    depends_on:
+      grafana-proxy:
+        condition: service_started
+      grafana-init:
+        condition: service_completed_successfully
+    networks:
+      platform-int-net:
+        aliases:
+          - grafana
+    profiles:
+      - grafana
+    healthcheck:
+      test: curl -s localhost:3000/api/health
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+  grafana-proxy:
+    image: "${REGISTRY}rapidminer-grafana-proxy:${GRAFANA_UTILS_VERSION}"
+    hostname: grafana-proxy
+    restart: always
+    environment:
+      - THREAD_NUMBERS=${GRAFANA_PROXY_THREAD_NUMBERS}
+      - AIHUB_BACKEND_INTERNAL_URL=${AIHUB_BACKEND_INTERNAL_URL}
+      # Comma spearated list of RTSA URLs (http://scoring-agent:8090,https://scoring-agent-2:8888)
+      - GRAFANA_SCORING_AGENT_BACKENDS=${GRAFANA_SCORING_AGENT_BACKENDS}
+      - ENPOINTS_GATEWAY_INTERNAL_URL=${REACT_APP_WEBAPI_GATEWAY_URL}
+      - GRAFANA_PROXY_LOGGING_LEVEL=${GRAFANA_PROXY_LOGGING_LEVEL}
+      - LOG_RESPONSE_DATA=${GRAFANA_PROXY_LOG_RESPONSE_DATA}
+      - REQUEST_TIMEOUT=${GRAFANA_PROXY_REQUEST_TIMEOUT}
+      - TZ=${TZ}
+    depends_on:
+      aihub-backend:
+        condition: service_healthy
+    networks:
+      platform-int-net:
+        aliases:
+          - grafana-proxy
+    profiles:
+      - grafana
+    healthcheck:
+      test: exec 6<> >(nc localhost 5000)
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 5s
+  landing-page:
+    image: "${REGISTRY}rapidminer-deployment-landing-page:${LANDING_PAGE_VERSION}"
+    restart: always
+    hostname: landing-page
+    environment:
+      - PUBLIC_DOMAIN=${PUBLIC_DOMAIN}
+      - SSO_PUBLIC_URL=${SSO_PUBLIC_URL}
+      - SSO_IDP_REALM=${SSO_IDP_REALM}
+      - SSO_CLIENT_ID=${LANDING_PAGE_SSO_CLIENT_ID}
+      - SSO_CLIENT_SECRET=${LANDING_PAGE_SSO_CLIENT_SECRET}
+      - DEBUG=${LANDING_PAGE_DEBUG}
+      - TZ=${TZ}
+    volumes:
+      - landing-page-vol:/var/www/html/uploaded/
+      - deployed-services-vol:/rapidminer/deployed-services/
+    networks:
+      platform-int-net:
+        aliases:
+          - landing-page
+    profiles:
+      - landing-page
+    healthcheck:
+      test: service apache2 status
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 5s
+  token-tool:
+    image: "${REGISTRY}rapidminer-deployment-landing-page:${LANDING_PAGE_VERSION}"
+    restart: always
+    hostname: token-tool
+    environment:
+      - PUBLIC_URL=${PUBLIC_URL}
+      - PUBLIC_DOMAIN=${PUBLIC_DOMAIN}
+      - SSO_PUBLIC_URL=${SSO_PUBLIC_URL}
+      - SSO_IDP_REALM=${SSO_IDP_REALM}
+      - SSO_CLIENT_ID=${TOKEN_TOOL_SSO_CLIENT_ID}
+      - SSO_CLIENT_SECRET=${TOKEN_TOOL_SSO_CLIENT_SECRET}
+      - DEBUG=${TOKEN_TOOL_DEBUG}
+      - SSO_CUSTOM_SCOPE=openid offline_access
+      - CUSTOM_URL_SUFFIX=${TOKEN_TOOL_URL_SUFFIX}
+      - CUSTOM_CONTENT=get-token
+      - TZ=${TZ}
+    volumes:
+      - token-tool-vol:/var/www/html/uploaded/
+    networks:
+      platform-int-net:
+        aliases:
+          - token-tool
+    profiles:
+      - token-tool
+    healthcheck:
+      test: service apache2 status
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 5s
+  panopticon-vizapp:
+    image: "${REGISTRY}panopticonviz:${PANOPTICON_VIZAPP_VERSION}"
+    hostname: panopticon-vizapp
+    #cpuset: ${PANOPTICON_VIZAPP_CPUSET}
+    restart: always
+    # A random mac address can be generated using the following command
+    # This is required for Altair One licensing
+    # openssl rand -hex 6 | sed 's/\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)/\1:\2:\3:\4:\5:\6/'
+    mac_address: ${PANOPTICON_VIZAPP_CONTAINER_MAC_ADDRESS}
+    environment:
+      - ALM_HHWU_PROXY_HOST=${ALM_HHWU_PROXY_HOST}
+      - ALM_HHWU_PROXY_PORT=${ALM_HHWU_PROXY_PORT}
+      - ALM_HHWU_PROXY_USERNAME=${ALM_HHWU_PROXY_USERNAME}
+      - ALM_HHWU_PROXY_PASSWORD=${ALM_HHWU_PROXY_PASSWORD}
+      - LOGGER_LEVEL_FILE=INFO # To turn on more verbose logging, change this to "FINE"
+      - PANOPTICON_DETACHED_LICENSE=${PANOPTICON_DETACHED_LICENSE}
+      - RM_LICENSE_MODE=${LICENSE_MODE}
+      - LICENSE_PROXY_MODE=${LICENSE_PROXY_MODE}
+      - PANO_CONTEXT_PATH=/panopticon
+      - PANOPTICON_ADMIN_GROUPS=admin
+      - PANOPTICON_DESIGNER_GROUPS=designer
+      - PANOPTICON_VIEWER_GROUPS=viewer
+      - PANOPTICON_DEFAULT_ROLES=VIEWER
+      - DATASTORE_CONNECTION_PASSWORD=${PANOPTICON_MONETDB_ADMIN_PASS}
+      - LICENSE_HWU_HOSTED_AUTHORIZATION_PASSWORD=${LICENSE_UNIT_MANAGER_PASSWORD}
+      - LICENSE_HWU_HOSTED_AUTHORIZATION_TOKEN=${LICENSE_UNIT_MANAGER_AUTH_CODE}
+      - LICENSE_HWU_HOSTED_AUTHORIZATION_USERNAME=${LICENSE_UNIT_MANAGER_USER_NAME}
+      - LICENSE_HWU_URI=${ALTAIR_LICENSE_PATH}
+      - CONNECTOR_PYTHON_MODE=fast_api
+      - CONNECTOR_PYTHON_PORT=80
+      - PANOPTICON_SSO_CLIENT_ID=${PANOPTICON_SSO_CLIENT_ID}
+      - PANOPTICON_SSO_CLIENT_SECRET=${PANOPTICON_SSO_CLIENT_SECRET}
+      - PUBLIC_URL=${PUBLIC_URL}
+      - SSO_PUBLIC_URL=${SSO_PUBLIC_URL}
+      - SSO_IDP_REALM=${SSO_IDP_REALM}
+      - FILE_UPLOAD_SIZE_MAX_BYTES=${PANOPTICON_FILE_UPLOAD_SIZE_MAX_BYTES}
+      - LMX_USE_EPOLL=${PANOPTICON_LMX_USE_EPOLL}
+      - CATALINA_OPTS=${PANOPTICON_CATALINA_OPTS}
+      - SERVER_ID=panopticon-vizapp
+      - TZ=${TZ}
+    volumes:
+      - panopticon-data-panoviz:/etc/panopticon/appdata
+      - panopticon-shared-vol:/etc/panopticon/sharedata
+      - panopticon-license-token-vol:/home/rapidminer/.altair_licensing/
+      - panopticon-logs-vol:/usr/local/tomcat/logs/
+      - ./panopticon/vizapp/Panopticon.properties.template:/etc/panopticon/appdata_default/Panopticon.properties.template
+      - ./panopticon/vizapp/logging.properties:/usr/local/tomcat/conf/logging.properties
+    networks:
+      panopticon-net:
+        aliases:
+          - panopticon-vizapp
+    profiles:
+      - panopticon
+    depends_on:
+      proxy:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: curl -s localhost:8080/server/rest/server/javascript/config?applicationName=admin
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+  panopticon-vizapp-python:
+    image: "${REGISTRY}panopticon-pyserve:${PANOPTICON_VIZAPP_PYTHON_VERSION}"
+    hostname: panopticon-vizapp-python
+    #cpuset: ${PANOPTICON_PYTHON_CPUSET}
+    restart: always
+    environment:
+      - MY_POD_NAME="panopticon-vizapp-python"
+      - TZ=${TZ}
+    volumes:
+      - ./panopticon/python/requirements.txt:/etc/panopticon/python_default/requirements.txt
+      - panopticon-python-ext:/etc/panopticon/python_extensions
+    networks:
+      panopticon-net:
+        aliases:
+          - panopticon-vizapp-python
+    profiles:
+      - panopticon
+    depends_on:
+      panopticon-vizapp:
+        condition: service_healthy
+    # healthcheck:
+    #   test: bash -c "exec 6<> /dev/tcp/localhost/80"
+    #   interval: 60s
+    #   timeout: 30s
+    #   retries: 5
+    #   start_period: 15s
+  panopticon-monetdb:
+    image: "${REGISTRY}panopticon-monetdb:${PANOPTICON_MONETDB_IMAGE_VERSION}"
+    hostname: panopticon-monetdb
+    restart: always
+    environment:
+      - MDB_DB_ADMIN_PASS=${PANOPTICON_MONETDB_ADMIN_PASS}
+      - TZ=${TZ}
+      - PGTZ=${TZ}
+    volumes:
+      - panopticon-data-monetdb:/var/monetdb5/dbfarm
+    networks:
+      panopticon-net:
+        aliases:
+          - panopticon-monetdb
+    profiles:
+      - panopticon
+    healthcheck:
+      test: bash -c "exec 6<> /dev/tcp/localhost/50000"
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+  panopticon-rserve:
+    image: "${REGISTRY}panopticon-rserve:${PANOPTICON_RSERVE_IMAGE_VERSION}"
+    hostname: panopticon-rserve
+    #cpuset: ${PANOPTICON_RSERVE_CPUSET}
+    restart: always
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ./panopticon/rserve/init_R_env_overide.R:/etc/panopticon/rserve_default/init_R_env_overide.R
+      - panopticon-rserve-ext:/etc/panopticon/rserve_extensions
+    networks:
+      panopticon-net:
+        aliases:
+          - panopticon-rserve
+    profiles:
+      - panopticon
+    healthcheck:
+      test: bash -c "exec 6<> /dev/tcp/localhost/6311"
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      panopticon-vizapp:
+        condition: service_healthy
+volumes:
+  webapi-agent-1:
+  webapi-agent-2:
+  panopticon-data-panoviz:
+  panopticon-shared-vol:
+  panopticon-license-token-vol:
+  panopticon-logs-vol:
+  panopticon-python-ext:
+  panopticon-data-monetdb:
+  panopticon-rserve-ext:
+  license-proxy-vol:
+  aihub-db-vol:
+  aihub-home-vol:
+  job-agent-vol:
+  job-agent-huggingface-vol:
+  platform-admin-uploaded-vol:
+  scoring-agent-vol:
+  jupyterhub-db-vol:
+  grafana-home-vol:
+  grafana-provisioning:
+  keycloak-db-vol:
+  keycloak-kcadm-vol:
+  landing-page-vol:
+  token-tool-vol:
+  deployed-services-vol:
+  coding-shared-vol:
+    name: ${JUPYTERHUB_NOTEBOOK_SHARED_ENV_VOLUME_NAME_DOCKERSPAWNER}
+  activemq-artemis-vol:
+networks:
+  panopticon-net:
+  platform-int-net:
+  idp-db-net:
+  aihub-db-net:
+  coding-environment-storage-net:
+  jupyterhub-user-net:
+    name: jupyterhub-user-net-${JUPYTERHUB_STACK_NAME}

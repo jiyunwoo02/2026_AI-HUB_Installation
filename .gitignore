@@ -1,0 +1,66 @@
+
+cat > .gitignore <<'EOF'
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Logs
+*.log
+logs/
+
+# IDE and editor settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets and credentials
+secrets/
+credentials/
+*.pem
+*.key
+
+# Local configuration
+config.local.*
+settings.local.*
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Model weights and datasets
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.h5
+*.pkl
+*.joblib
+
+# Build and distribution
+dist/
+build/
+*.egg-info/
+
+# Node.js (if used)
+node_modules/
+EOF
